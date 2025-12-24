@@ -1,0 +1,25 @@
+# ===== Go Dev Stage (with Hot Reload) =====
+FROM golang:1.25-alpine
+
+# 必要なツールを追加（git, bash など）
+RUN apk add --no-cache git bash curl
+
+WORKDIR /app
+
+# Air（ホットリロードツール）をインストール
+RUN go install github.com/air-verse/air@latest
+
+# 先に go.mod / go.sum をコピー（キャッシュ効く）
+COPY go.mod go.sum ./
+RUN go mod download
+
+# プロジェクト全体をコピー
+COPY . .
+
+# Air 設定ファイルがある場合は使う（なければ Air が自動生成する）
+# COPY .air.toml ./
+
+EXPOSE 8080
+
+# ホットリロード起動
+CMD ["air", "-c", ".air.toml"]

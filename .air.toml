@@ -1,0 +1,32 @@
+# ==============================
+# Air Hot Reload Configuration
+# ==============================
+
+# Go のビルドコマンド
+[build]
+cmd = "go build -o ./tmp/app ."
+bin = "tmp/app"
+full_bin = ""
+include_ext = ["go"]
+exclude_dir = ["vendor", "tmp", "proto"]
+delay = 200 # 200ms debounce
+
+# 変更監視
+[log]
+level = "debug"
+time = true
+
+# 監視対象
+[watch]
+include = ["."]
+exclude = [
+  "tmp",
+  "vendor",
+  ".git",
+  "node_modules",
+  "docker",
+]
+
+# 起動前にクリア
+[clean]
+cmd = "rm -rf ./tmp"
