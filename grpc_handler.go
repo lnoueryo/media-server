@@ -42,6 +42,48 @@ func (s *MediaService) CreatePeer(
 		}
 	}
 
+
+	ordered := false
+	maxRetransmits := uint16(0)
+
+	options := &webrtc.DataChannelInit{
+		Ordered:        &ordered,
+		MaxRetransmits: &maxRetransmits,
+	}
+	dc, err := peerConnection.CreateDataChannel("room", options)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create datachannel failed: %v", err)
+	}
+	dc.OnOpen(func() {
+		log.Infof("DataChannel opened: %s", dc.Label())
+
+		// テスト送信
+		msg := []byte(`{"type":"joined","message":"welcome"}`)
+		_ = dc.Send(msg)
+	})
+
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if !msg.IsString {
+			return
+		}
+
+		var env DCEnvelope
+		if err := json.Unmarshal(msg.Data, &env); err != nil {
+			log.Warnf("invalid dc message: %v", err)
+			return
+		}
+
+		broadcastDataChannel("room", roomId, user.Id, env)
+	})
+	// payload := map[string]any{
+	// 	"type": "joined",
+	// 	"user": user,
+	// }
+
+	// b, _ := json.Marshal(payload)
+	// dc.Send(b)
+
+
 	// ----- register participant -----
 	spaceMember, err := GetTargetSpaceMember(roomId, user.Id); if err != nil {
 		log.Errorf("space member error: %v", err)
@@ -49,7 +91,8 @@ func (s *MediaService) CreatePeer(
 	}
 	room.listLock.Lock()
 	_, ok := room.participants[user.Id]; if ok {
-		Unicast(roomId, user.Id, "duplicate-participant", []byte{})
+		// Unicast(roomId, user.Id, "duplicate-participant", []byte{})
+		unicastDataChannel("room", roomId, user.Id, DCEnvelope{"duplicate-participant", nil})
 		room.listLock.Unlock()
 		return nil, status.Error(codes.AlreadyExists, "duplicate participant")
 	}
@@ -63,6 +106,7 @@ func (s *MediaService) CreatePeer(
 			user.GetImage(),
 		},
 		peerConnection,
+		map[string]*webrtc.DataChannel{"room": dc},
 	}
 	room.listLock.Unlock()
 
@@ -112,11 +156,11 @@ func (s *MediaService) CreatePeer(
 					Image: participant.Image,
 				})
 			}
+			if len(room.participants) == 0 {
+				delete(rooms.item, roomId)
+			}
 			res, _ := json.Marshal(users)
 			BroadcastToLobby(roomId, "access", res)
-			// for _, conn := range room.wsConnections {
-			// 	conn.Send("access", string(res))
-			// }
 		}
 	})
 
@@ -143,9 +187,11 @@ func (s *MediaService) CreatePeer(
 			removeTrack(room, trackLocal)
 			delete(room.trackParticipants, t.StreamID())
 		}()
-		BroadcastToRoom(roomId, "track-participant", jsonData)
-		// Multicast(roomId, "owner", "track-participant", jsonData)
-		// room.BroadcastParticipants("track-participant", string(jsonData))
+		// BroadcastToRoom(roomId, "track-participant", jsonData)
+		broadcastDataChannel("room", roomId, user.Id, DCEnvelope{
+			Event: "track-participant",
+			Message: jsonData,
+		})
 
 		buf := make([]byte, 1500)
 		pkt := &rtp.Packet{}
@@ -187,11 +233,6 @@ func (s *MediaService) AddCandidate(
 		log.Errorf("ice add error: %v", err)
 	}
 	return &media.Void{}, nil
-	// var cand webrtc.ICECandidateInit
-	// json.Unmarshal([]byte(msg.Data), &cand)
-	// if err := peerConnection.AddICECandidate(cand); err != nil {
-	// 	log.Errorf("ice add error: %v", err)
-	// }
 }
 
 func (s *MediaService) SetAnswer(
@@ -209,8 +250,4 @@ func (s *MediaService) SetAnswer(
 	json.Unmarshal([]byte(answer), &ans)
 	participant.PC.SetRemoteDescription(ans)
 	return &media.Void{}, nil
-	// var cand webrtc.ICECand
-	// var ans webrtc.SessionDescription
-	// json.Unmarshal([]byte(msg.Data), &ans)
-	// peerConnection.SetRemoteDescription(ans)
 }

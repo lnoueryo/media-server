@@ -31,6 +31,7 @@ type Participant struct {
     Role string `json:"role"`
 	UserInfo
 	PC *webrtc.PeerConnection
+    DCs map[string]*webrtc.DataChannel
 }
 
 type TrackParticipant struct{
@@ -207,10 +208,6 @@ func signalPeerConnections(room *Room) {
             }
             // gRPCで送信
             offerJSON, _ := json.Marshal(offer)
-            // p.WS.WriteJSON(&WebsocketMessage{
-            //     Event: "offer",
-            //     Data:  string(offerJSON),
-            // })
             Unicast(room.ID, p.ID, "offer", offerJSON)
         }
         return false
