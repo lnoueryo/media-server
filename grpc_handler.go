@@ -8,7 +8,9 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	media "streaming-media.jounetsism.biz/proto/media"
 )
@@ -20,11 +22,19 @@ type MediaService struct {
 func (s *MediaService) CreatePeer(
 	ctx context.Context,
 	req *media.CreatePeerRequest,
-) (*media.Void, error) {
+) (*media.GetRoomResponse, error) {
 	roomId := req.GetSpaceId()
 	user := req.GetUser()
+	spaceMember := req.GetSpaceMember()
 	room := rooms.getOrCreate(roomId)
-
+	_, ok := room.participants[user.Id];
+	if ok {
+		md := metadata.Pairs(
+			"error-code", "participant-already-exists",
+		)
+		grpc.SetTrailer(ctx, md)
+		return nil, status.Error(codes.AlreadyExists, "違うデバイスで既に参加しています")
+	}
 	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create peer connection: %v", err)
@@ -55,9 +65,6 @@ func (s *MediaService) CreatePeer(
 		return nil, status.Errorf(codes.Internal, "create datachannel failed: %v", err)
 	}
 	dc.OnOpen(func() {
-		log.Infof("DataChannel opened: %s", dc.Label())
-
-		// テスト送信
 		msg := []byte(`{"type":"joined","message":"welcome"}`)
 		_ = dc.Send(msg)
 	})
@@ -82,20 +89,7 @@ func (s *MediaService) CreatePeer(
 
 	// b, _ := json.Marshal(payload)
 	// dc.Send(b)
-
-
-	// ----- register participant -----
-	spaceMember, err := GetTargetSpaceMember(roomId, user.Id); if err != nil {
-		log.Errorf("space member error: %v", err)
-		return nil, status.Errorf(codes.PermissionDenied, "space member not allowed: %v", err)
-	}
 	room.listLock.Lock()
-	_, ok := room.participants[user.Id]; if ok {
-		// Unicast(roomId, user.Id, "duplicate-participant", []byte{})
-		unicastDataChannel("room", roomId, user.Id, DCEnvelope{"duplicate-participant", nil})
-		room.listLock.Unlock()
-		return nil, status.Error(codes.AlreadyExists, "duplicate participant")
-	}
 	room.participants[user.Id] = &Participant{
 		spaceMember.GetId(),
 		spaceMember.GetRole(),
@@ -129,7 +123,6 @@ func (s *MediaService) CreatePeer(
 			}
 			res, _ := json.Marshal(participants)
 			BroadcastToLobby(roomId, "access", res)
-
 		case webrtc.PeerConnectionStateFailed:
 			_ = peerConnection.Close()
 		case webrtc.PeerConnectionStateDisconnected:
@@ -213,7 +206,22 @@ func (s *MediaService) CreatePeer(
 	})
 
 	signalPeerConnections(room)
-	return &media.Void{}, nil
+	var participants []*media.Participant
+	for _, p := range room.participants {
+		if p.PC.ConnectionState().String() == "connected" {
+			participants = append(participants, &media.Participant{
+				Id:    p.ID,
+				Name:  p.Name,
+				Email: p.Email,
+				Image: p.Image,
+			})
+		}
+	}
+
+	return &media.GetRoomResponse{
+		Id:           room.ID,
+		Participants: participants,
+	}, nil
 }
 
 func (s *MediaService) AddCandidate(
@@ -249,5 +257,128 @@ func (s *MediaService) SetAnswer(
 	var ans webrtc.SessionDescription
 	json.Unmarshal([]byte(answer), &ans)
 	participant.PC.SetRemoteDescription(ans)
+	return &media.Void{}, nil
+}
+
+func (s *MediaService) GetRoom(
+	ctx context.Context,
+	req *media.GetRoomRequest,
+) (*media.GetRoomResponse, error) {
+	var participants []*media.Participant
+	room, ok := rooms.getRoom(req.SpaceId)
+	log.Info("GetRoom gRPC called: spaceId=%s, found=%v", req.SpaceId, ok)
+	if !ok {
+		md := metadata.Pairs(
+			"error-code", "room-not-found",
+		)
+		grpc.SetTrailer(ctx, md)
+		return nil, status.Error(codes.NotFound, "roomが存在しません")
+	}
+
+	for _, p := range room.participants {
+		if p.PC.ConnectionState().String() == "connected" {
+			participants = append(participants, &media.Participant{
+				Id:    p.ID,
+				Name:  p.Name,
+				Email: p.Email,
+				Image: p.Image,
+			})
+		}
+	}
+
+	return &media.GetRoomResponse{
+		Id:           room.ID,
+		Participants: participants,
+	}, nil
+}
+
+func (s *MediaService) RemoveParticipant(
+	ctx context.Context,
+	req *media.RemoveParticipantRequest,
+) (*media.GetRoomResponse, error) {
+	roomId := req.GetSpaceId()
+	userId := req.GetUserId()
+
+	// ルームが存在しない場合
+	room, ok := rooms.getRoom(roomId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no-target-room")
+	}
+
+	// 参加者が存在しない場合
+	_, ok = room.participants[userId]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no-target-user")
+	}
+	unicastDataChannel("room", roomId, userId, DCEnvelope{"close", nil})
+	room.listLock.Lock()
+	// 切断処理
+	delete(room.participants, userId)
+	// WebRTC のクローズ
+	room.listLock.Unlock()
+	// 残った参加者を整形
+	responseParticipants := make([]*media.Participant, 0, len(room.participants))
+	for _, p := range room.participants {
+		if p.PC.ConnectionState() == webrtc.PeerConnectionStateConnected {
+			responseParticipants = append(responseParticipants, &media.Participant{
+				Id:    p.ID,
+				Name:  p.Name,
+				Email: p.Email,
+				Image: p.Image,
+			})
+		}
+	}
+
+	return &media.GetRoomResponse{
+		Id:           room.ID,
+		Participants: responseParticipants,
+	}, nil
+}
+
+func (s *MediaService) RequestEntry(
+	ctx context.Context,
+	req *media.SpaceMemberRequest,
+) (*media.Void, error) {
+	_, ok := rooms.getRoom(req.SpaceId)
+	if !ok {
+		md := metadata.Pairs(
+			"error-code", "room-not-found",
+		)
+		grpc.SetTrailer(ctx, md)
+		return nil, status.Error(codes.NotFound, "roomが存在しません")
+	}
+
+	jsonData, _ := json.Marshal(req.SpaceMember)
+	multicastDataChannel("room", req.SpaceId, DCEnvelope{
+		Event: "participant-request",
+		Message: jsonData,
+	}, func(participant *Participant) bool {
+		return participant.Role == "owner"
+	})
+
+	return &media.Void{}, nil
+}
+
+func (s *MediaService) AcceptInvitation(
+	ctx context.Context,
+	req *media.SpaceMemberRequest,
+) (*media.Void, error) {
+	_, ok := rooms.getRoom(req.SpaceId)
+	if !ok {
+		md := metadata.Pairs(
+			"error-code", "room-not-found",
+		)
+		grpc.SetTrailer(ctx, md)
+		return nil, status.Error(codes.NotFound, "roomが存在しません")
+	}
+
+	jsonData, _ := json.Marshal(req.SpaceMember)
+	multicastDataChannel("room", req.SpaceId, DCEnvelope{
+		Event: "accept-invitation",
+		Message: jsonData,
+	}, func(participant *Participant) bool {
+		return participant.Role == "owner"
+	})
+
 	return &media.Void{}, nil
 }

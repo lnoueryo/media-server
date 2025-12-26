@@ -17,7 +17,7 @@ import (
 )
 var (
     spaceServiceClient application.SpaceServiceClient
-    roomServiceClient signaling.RoomServiceClient
+    signalingServiceClient signaling.SignalingServiceClient
     grpcConn           *grpc.ClientConn
     onceInitSpace           sync.Once
     onceInitRoom           sync.Once
@@ -43,7 +43,7 @@ func initRoomClient() {
     if err != nil {
         log.Fatalf("failed to dial signaling server: %v", err)
     }
-    roomServiceClient = signaling.NewRoomServiceClient(conn)
+    signalingServiceClient = signaling.NewSignalingServiceClient(conn)
 }
 
 func GetTargetSpaceMember(roomId string, userId string) (*application.GetTargetSpaceMemberResponse, error) {
@@ -76,29 +76,7 @@ func BroadcastToLobby(spaceId string, event string, data []byte) error {
     ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
     defer cancel()
 
-    _, err := roomServiceClient.BroadcastToLobby(ctx, &signaling.BroadcastRequest{
-        SpaceId: spaceId,
-        Event:   event,
-        Data:    data,
-    })
-    if err != nil {
-        return err
-    }
-
-    return nil
-}
-
-func BroadcastToRoom(spaceId string, event string, data []byte) error {
-    onceInitRoom.Do(initRoomClient)
-    token := createServiceJWT()
-    md := metadata.New(map[string]string{
-        "authorization": "Bearer " + token,
-    })
-    ctx := metadata.NewOutgoingContext(context.Background(), md)
-    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-    defer cancel()
-
-    _, err := roomServiceClient.BroadcastToRoom(ctx, &signaling.BroadcastRequest{
+    _, err := signalingServiceClient.BroadcastToLobby(ctx, &signaling.BroadcastRequest{
         SpaceId: spaceId,
         Event:   event,
         Data:    data,
@@ -120,7 +98,7 @@ func Unicast(spaceId string, userId string, event string, data []byte) error {
     ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
     defer cancel()
 
-    _, err := roomServiceClient.Unicast(ctx, &signaling.UnicastRequest{
+    _, err := signalingServiceClient.Unicast(ctx, &signaling.UnicastRequest{
         SpaceId: spaceId,
         UserId:  userId,
         Event:   event,

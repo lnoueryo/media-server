@@ -54,3 +54,25 @@ func unicastDataChannel(label string, roomId string, userId string, env DCEnvelo
         }
     }
 }
+
+func multicastDataChannel(label string, roomId string, env DCEnvelope, callback func(participant *Participant) bool) {
+    room, ok := rooms.getRoom(roomId)
+    if !ok {
+        return
+    }
+
+    message, _ := json.Marshal(env)
+
+    room.listLock.Lock()
+    defer room.listLock.Unlock()
+
+    for _, p := range room.participants {
+        if !callback(p) {
+            continue
+        }
+		dc := p.DCs[label]
+        if dc != nil && dc.ReadyState() == webrtc.DataChannelStateOpen {
+            _ = dc.Send(message)
+        }
+    }
+}

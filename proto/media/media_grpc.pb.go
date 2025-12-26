@@ -19,18 +19,26 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MediaService_CreatePeer_FullMethodName   = "/media.MediaService/CreatePeer"
-	MediaService_AddCandidate_FullMethodName = "/media.MediaService/AddCandidate"
-	MediaService_SetAnswer_FullMethodName    = "/media.MediaService/SetAnswer"
+	MediaService_GetRoom_FullMethodName           = "/media.MediaService/GetRoom"
+	MediaService_RemoveParticipant_FullMethodName = "/media.MediaService/RemoveParticipant"
+	MediaService_CreatePeer_FullMethodName        = "/media.MediaService/CreatePeer"
+	MediaService_AddCandidate_FullMethodName      = "/media.MediaService/AddCandidate"
+	MediaService_SetAnswer_FullMethodName         = "/media.MediaService/SetAnswer"
+	MediaService_RequestEntry_FullMethodName      = "/media.MediaService/RequestEntry"
+	MediaService_AcceptInvitation_FullMethodName  = "/media.MediaService/AcceptInvitation"
 )
 
 // MediaServiceClient is the client API for MediaService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MediaServiceClient interface {
-	CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*Void, error)
+	GetRoom(ctx context.Context, in *GetRoomRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
+	RemoveParticipant(ctx context.Context, in *RemoveParticipantRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
+	CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
 	AddCandidate(ctx context.Context, in *AddCandidateRequest, opts ...grpc.CallOption) (*Void, error)
 	SetAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error)
+	RequestEntry(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
+	AcceptInvitation(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
 }
 
 type mediaServiceClient struct {
@@ -41,9 +49,29 @@ func NewMediaServiceClient(cc grpc.ClientConnInterface) MediaServiceClient {
 	return &mediaServiceClient{cc}
 }
 
-func (c *mediaServiceClient) CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*Void, error) {
+func (c *mediaServiceClient) GetRoom(ctx context.Context, in *GetRoomRequest, opts ...grpc.CallOption) (*GetRoomResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Void)
+	out := new(GetRoomResponse)
+	err := c.cc.Invoke(ctx, MediaService_GetRoom_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mediaServiceClient) RemoveParticipant(ctx context.Context, in *RemoveParticipantRequest, opts ...grpc.CallOption) (*GetRoomResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRoomResponse)
+	err := c.cc.Invoke(ctx, MediaService_RemoveParticipant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mediaServiceClient) CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*GetRoomResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRoomResponse)
 	err := c.cc.Invoke(ctx, MediaService_CreatePeer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -71,13 +99,37 @@ func (c *mediaServiceClient) SetAnswer(ctx context.Context, in *SetAnswerRequest
 	return out, nil
 }
 
+func (c *mediaServiceClient) RequestEntry(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Void)
+	err := c.cc.Invoke(ctx, MediaService_RequestEntry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mediaServiceClient) AcceptInvitation(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Void)
+	err := c.cc.Invoke(ctx, MediaService_AcceptInvitation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MediaServiceServer is the server API for MediaService service.
 // All implementations must embed UnimplementedMediaServiceServer
 // for forward compatibility.
 type MediaServiceServer interface {
-	CreatePeer(context.Context, *CreatePeerRequest) (*Void, error)
+	GetRoom(context.Context, *GetRoomRequest) (*GetRoomResponse, error)
+	RemoveParticipant(context.Context, *RemoveParticipantRequest) (*GetRoomResponse, error)
+	CreatePeer(context.Context, *CreatePeerRequest) (*GetRoomResponse, error)
 	AddCandidate(context.Context, *AddCandidateRequest) (*Void, error)
 	SetAnswer(context.Context, *SetAnswerRequest) (*Void, error)
+	RequestEntry(context.Context, *SpaceMemberRequest) (*Void, error)
+	AcceptInvitation(context.Context, *SpaceMemberRequest) (*Void, error)
 	mustEmbedUnimplementedMediaServiceServer()
 }
 
@@ -88,7 +140,13 @@ type MediaServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMediaServiceServer struct{}
 
-func (UnimplementedMediaServiceServer) CreatePeer(context.Context, *CreatePeerRequest) (*Void, error) {
+func (UnimplementedMediaServiceServer) GetRoom(context.Context, *GetRoomRequest) (*GetRoomResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRoom not implemented")
+}
+func (UnimplementedMediaServiceServer) RemoveParticipant(context.Context, *RemoveParticipantRequest) (*GetRoomResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveParticipant not implemented")
+}
+func (UnimplementedMediaServiceServer) CreatePeer(context.Context, *CreatePeerRequest) (*GetRoomResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreatePeer not implemented")
 }
 func (UnimplementedMediaServiceServer) AddCandidate(context.Context, *AddCandidateRequest) (*Void, error) {
@@ -96,6 +154,12 @@ func (UnimplementedMediaServiceServer) AddCandidate(context.Context, *AddCandida
 }
 func (UnimplementedMediaServiceServer) SetAnswer(context.Context, *SetAnswerRequest) (*Void, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetAnswer not implemented")
+}
+func (UnimplementedMediaServiceServer) RequestEntry(context.Context, *SpaceMemberRequest) (*Void, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestEntry not implemented")
+}
+func (UnimplementedMediaServiceServer) AcceptInvitation(context.Context, *SpaceMemberRequest) (*Void, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcceptInvitation not implemented")
 }
 func (UnimplementedMediaServiceServer) mustEmbedUnimplementedMediaServiceServer() {}
 func (UnimplementedMediaServiceServer) testEmbeddedByValue()                      {}
@@ -116,6 +180,42 @@ func RegisterMediaServiceServer(s grpc.ServiceRegistrar, srv MediaServiceServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&MediaService_ServiceDesc, srv)
+}
+
+func _MediaService_GetRoom_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRoomRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).GetRoom(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_GetRoom_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).GetRoom(ctx, req.(*GetRoomRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MediaService_RemoveParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveParticipantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).RemoveParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_RemoveParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).RemoveParticipant(ctx, req.(*RemoveParticipantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _MediaService_CreatePeer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -172,6 +272,42 @@ func _MediaService_SetAnswer_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MediaService_RequestEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SpaceMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).RequestEntry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_RequestEntry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).RequestEntry(ctx, req.(*SpaceMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MediaService_AcceptInvitation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SpaceMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).AcceptInvitation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_AcceptInvitation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).AcceptInvitation(ctx, req.(*SpaceMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MediaService_ServiceDesc is the grpc.ServiceDesc for MediaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -179,6 +315,14 @@ var MediaService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "media.MediaService",
 	HandlerType: (*MediaServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetRoom",
+			Handler:    _MediaService_GetRoom_Handler,
+		},
+		{
+			MethodName: "RemoveParticipant",
+			Handler:    _MediaService_RemoveParticipant_Handler,
+		},
 		{
 			MethodName: "CreatePeer",
 			Handler:    _MediaService_CreatePeer_Handler,
@@ -190,6 +334,14 @@ var MediaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetAnswer",
 			Handler:    _MediaService_SetAnswer_Handler,
+		},
+		{
+			MethodName: "RequestEntry",
+			Handler:    _MediaService_RequestEntry_Handler,
+		},
+		{
+			MethodName: "AcceptInvitation",
+			Handler:    _MediaService_AcceptInvitation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
