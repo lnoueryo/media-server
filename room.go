@@ -12,6 +12,7 @@ import (
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
+	"streaming-media.jounetsism.biz/proto/media"
 )
 
 var rooms = &Rooms{
@@ -34,6 +35,12 @@ type Participant struct {
     DCs map[string]*webrtc.DataChannel
 }
 
+type Viewer struct {
+	UserInfo
+	PC *webrtc.PeerConnection
+    DCs map[string]*webrtc.DataChannel
+}
+
 type TrackParticipant struct{
     UserInfo
     StreamID string `json:"streamId"`
@@ -47,14 +54,22 @@ type Room struct {
 	trackLocals   map[string]*webrtc.TrackLocalStaticRTP
 	trackRemotes  map[string]*webrtc.TrackRemote
     trackParticipants map[string]*TrackParticipant
+    viewers       map[string]*Viewer
 	cancelFunc    context.CancelFunc
 }
 
-func (r *Room) GetSliceParticipants() []*UserInfo {
-    participants := make([]*UserInfo, 0)
-    for _, participant := range r.participants {
-        participants = append(participants, &participant.UserInfo)
-    }
+func (r *Room) GetSliceParticipants() []*media.Participant {
+    participants := make([]*media.Participant, 0)
+	for _, p := range r.participants {
+		if p.PC.ConnectionState() == webrtc.PeerConnectionStateConnected {
+			participants = append(participants, &media.Participant{
+				Id:    p.ID,
+				Name:  p.Name,
+				Email: p.Email,
+				Image: p.Image,
+			})
+		}
+	}
     return participants
 }
 
@@ -85,6 +100,7 @@ func (r *Rooms) getOrCreate(id string) *Room {
         trackLocals:   make(map[string]*webrtc.TrackLocalStaticRTP),
         trackRemotes:  make(map[string]*webrtc.TrackRemote),
         trackParticipants: make(map[string]*TrackParticipant),
+        viewers:       make(map[string]*Viewer),
     }
     r.item[id] = room
 
@@ -162,6 +178,53 @@ func signalPeerConnections(room *Room) {
     }()
 
     attemptSync := func() bool {
+        for id, v := range room.viewers {
+            pc := v.PC
+            if pc.ConnectionState() == webrtc.PeerConnectionStateClosed {
+                delete(room.viewers, id)
+                return true
+            }
+
+            existing := map[string]bool{}
+
+            for _, sender := range pc.GetSenders() {
+                if sender.Track() != nil {
+                    tid := sender.Track().ID()
+                    existing[tid] = true
+
+                    if _, ok := room.trackLocals[tid]; !ok {
+                        if err := pc.RemoveTrack(sender); err != nil {
+                            return true
+                        }
+                    }
+                }
+            }
+
+            for _, receiver := range pc.GetReceivers() {
+                if receiver.Track() != nil {
+                    existing[receiver.Track().ID()] = true
+                }
+            }
+
+            for tid, tl := range room.trackLocals {
+                if !existing[tid] {
+                    if _, err := pc.AddTrack(tl); err != nil {
+                        return true
+                    }
+                }
+            }
+
+            offer, err := pc.CreateOffer(nil)
+            if err != nil {
+                return true
+            }
+            if err := pc.SetLocalDescription(offer); err != nil {
+                return true
+            }
+            // gRPCで送信
+            offerJSON, _ := json.Marshal(offer)
+            Unicast(room.ID, v.ID, "offer", offerJSON)
+        }
         for id, p := range room.participants {
             pc := p.PC
 
@@ -237,6 +300,7 @@ func (r *Rooms) cleanupEmptyRoom(id string) {
 	defer room.listLock.Unlock()
 
 	if len(room.participants) == 0 &&
+		len(room.viewers) == 0 &&
 		len(room.trackLocals) == 0 &&
 		len(room.trackRemotes) == 0 &&
 		len(room.trackParticipants) == 0 {
@@ -255,6 +319,19 @@ func dispatchKeyFrame(room *Room) {
     defer room.listLock.Unlock()
 
     for _, p := range room.participants {
+        pc := p.PC
+        for _, r := range pc.GetReceivers() {
+            if r.Track() != nil {
+                pc.WriteRTCP([]rtcp.Packet{
+                    &rtcp.PictureLossIndication{
+                        MediaSSRC: uint32(r.Track().SSRC()),
+                    },
+                })
+            }
+        }
+    }
+
+    for _, p := range room.viewers {
         pc := p.PC
         for _, r := range pc.GetReceivers() {
             if r.Track() != nil {

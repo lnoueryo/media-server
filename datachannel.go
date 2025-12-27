@@ -23,10 +23,14 @@ func broadcastDataChannel(label string, roomId string, fromUserId string, env DC
     defer room.listLock.Unlock()
 
     for _, p := range room.participants {
-        // if uid == fromUserId {
-        //     continue // 自分には返さない
-        // }
 		dc := p.DCs[label]
+        if dc != nil && dc.ReadyState() == webrtc.DataChannelStateOpen {
+            _ = dc.Send(message)
+        }
+    }
+
+    for _, v := range room.viewers {
+		dc := v.DCs[label]
         if dc != nil && dc.ReadyState() == webrtc.DataChannelStateOpen {
             _ = dc.Send(message)
         }

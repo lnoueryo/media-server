@@ -19,13 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MediaService_GetRoom_FullMethodName           = "/media.MediaService/GetRoom"
-	MediaService_RemoveParticipant_FullMethodName = "/media.MediaService/RemoveParticipant"
-	MediaService_CreatePeer_FullMethodName        = "/media.MediaService/CreatePeer"
-	MediaService_AddCandidate_FullMethodName      = "/media.MediaService/AddCandidate"
-	MediaService_SetAnswer_FullMethodName         = "/media.MediaService/SetAnswer"
-	MediaService_RequestEntry_FullMethodName      = "/media.MediaService/RequestEntry"
-	MediaService_AcceptInvitation_FullMethodName  = "/media.MediaService/AcceptInvitation"
+	MediaService_GetRoom_FullMethodName            = "/media.MediaService/GetRoom"
+	MediaService_RemoveParticipant_FullMethodName  = "/media.MediaService/RemoveParticipant"
+	MediaService_CreatePeer_FullMethodName         = "/media.MediaService/CreatePeer"
+	MediaService_CreateViewerPeer_FullMethodName   = "/media.MediaService/CreateViewerPeer"
+	MediaService_AddCandidate_FullMethodName       = "/media.MediaService/AddCandidate"
+	MediaService_AddViewerCandidate_FullMethodName = "/media.MediaService/AddViewerCandidate"
+	MediaService_SetAnswer_FullMethodName          = "/media.MediaService/SetAnswer"
+	MediaService_SetViewerAnswer_FullMethodName    = "/media.MediaService/SetViewerAnswer"
+	MediaService_RequestEntry_FullMethodName       = "/media.MediaService/RequestEntry"
+	MediaService_AcceptInvitation_FullMethodName   = "/media.MediaService/AcceptInvitation"
 )
 
 // MediaServiceClient is the client API for MediaService service.
@@ -35,8 +38,11 @@ type MediaServiceClient interface {
 	GetRoom(ctx context.Context, in *GetRoomRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
 	RemoveParticipant(ctx context.Context, in *RemoveParticipantRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
 	CreatePeer(ctx context.Context, in *CreatePeerRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
+	CreateViewerPeer(ctx context.Context, in *CreateViewerPeerRequest, opts ...grpc.CallOption) (*GetRoomResponse, error)
 	AddCandidate(ctx context.Context, in *AddCandidateRequest, opts ...grpc.CallOption) (*Void, error)
+	AddViewerCandidate(ctx context.Context, in *AddCandidateRequest, opts ...grpc.CallOption) (*Void, error)
 	SetAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error)
+	SetViewerAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error)
 	RequestEntry(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
 	AcceptInvitation(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
 }
@@ -79,6 +85,16 @@ func (c *mediaServiceClient) CreatePeer(ctx context.Context, in *CreatePeerReque
 	return out, nil
 }
 
+func (c *mediaServiceClient) CreateViewerPeer(ctx context.Context, in *CreateViewerPeerRequest, opts ...grpc.CallOption) (*GetRoomResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetRoomResponse)
+	err := c.cc.Invoke(ctx, MediaService_CreateViewerPeer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *mediaServiceClient) AddCandidate(ctx context.Context, in *AddCandidateRequest, opts ...grpc.CallOption) (*Void, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Void)
@@ -89,10 +105,30 @@ func (c *mediaServiceClient) AddCandidate(ctx context.Context, in *AddCandidateR
 	return out, nil
 }
 
+func (c *mediaServiceClient) AddViewerCandidate(ctx context.Context, in *AddCandidateRequest, opts ...grpc.CallOption) (*Void, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Void)
+	err := c.cc.Invoke(ctx, MediaService_AddViewerCandidate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *mediaServiceClient) SetAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Void)
 	err := c.cc.Invoke(ctx, MediaService_SetAnswer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mediaServiceClient) SetViewerAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Void)
+	err := c.cc.Invoke(ctx, MediaService_SetViewerAnswer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +162,11 @@ type MediaServiceServer interface {
 	GetRoom(context.Context, *GetRoomRequest) (*GetRoomResponse, error)
 	RemoveParticipant(context.Context, *RemoveParticipantRequest) (*GetRoomResponse, error)
 	CreatePeer(context.Context, *CreatePeerRequest) (*GetRoomResponse, error)
+	CreateViewerPeer(context.Context, *CreateViewerPeerRequest) (*GetRoomResponse, error)
 	AddCandidate(context.Context, *AddCandidateRequest) (*Void, error)
+	AddViewerCandidate(context.Context, *AddCandidateRequest) (*Void, error)
 	SetAnswer(context.Context, *SetAnswerRequest) (*Void, error)
+	SetViewerAnswer(context.Context, *SetAnswerRequest) (*Void, error)
 	RequestEntry(context.Context, *SpaceMemberRequest) (*Void, error)
 	AcceptInvitation(context.Context, *SpaceMemberRequest) (*Void, error)
 	mustEmbedUnimplementedMediaServiceServer()
@@ -149,11 +188,20 @@ func (UnimplementedMediaServiceServer) RemoveParticipant(context.Context, *Remov
 func (UnimplementedMediaServiceServer) CreatePeer(context.Context, *CreatePeerRequest) (*GetRoomResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreatePeer not implemented")
 }
+func (UnimplementedMediaServiceServer) CreateViewerPeer(context.Context, *CreateViewerPeerRequest) (*GetRoomResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateViewerPeer not implemented")
+}
 func (UnimplementedMediaServiceServer) AddCandidate(context.Context, *AddCandidateRequest) (*Void, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AddCandidate not implemented")
 }
+func (UnimplementedMediaServiceServer) AddViewerCandidate(context.Context, *AddCandidateRequest) (*Void, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddViewerCandidate not implemented")
+}
 func (UnimplementedMediaServiceServer) SetAnswer(context.Context, *SetAnswerRequest) (*Void, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetAnswer not implemented")
+}
+func (UnimplementedMediaServiceServer) SetViewerAnswer(context.Context, *SetAnswerRequest) (*Void, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetViewerAnswer not implemented")
 }
 func (UnimplementedMediaServiceServer) RequestEntry(context.Context, *SpaceMemberRequest) (*Void, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestEntry not implemented")
@@ -236,6 +284,24 @@ func _MediaService_CreatePeer_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MediaService_CreateViewerPeer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateViewerPeerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).CreateViewerPeer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_CreateViewerPeer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).CreateViewerPeer(ctx, req.(*CreateViewerPeerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MediaService_AddCandidate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AddCandidateRequest)
 	if err := dec(in); err != nil {
@@ -254,6 +320,24 @@ func _MediaService_AddCandidate_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MediaService_AddViewerCandidate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddCandidateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).AddViewerCandidate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_AddViewerCandidate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).AddViewerCandidate(ctx, req.(*AddCandidateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MediaService_SetAnswer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetAnswerRequest)
 	if err := dec(in); err != nil {
@@ -268,6 +352,24 @@ func _MediaService_SetAnswer_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MediaServiceServer).SetAnswer(ctx, req.(*SetAnswerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MediaService_SetViewerAnswer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetAnswerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MediaServiceServer).SetViewerAnswer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MediaService_SetViewerAnswer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MediaServiceServer).SetViewerAnswer(ctx, req.(*SetAnswerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -328,12 +430,24 @@ var MediaService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MediaService_CreatePeer_Handler,
 		},
 		{
+			MethodName: "CreateViewerPeer",
+			Handler:    _MediaService_CreateViewerPeer_Handler,
+		},
+		{
 			MethodName: "AddCandidate",
 			Handler:    _MediaService_AddCandidate_Handler,
 		},
 		{
+			MethodName: "AddViewerCandidate",
+			Handler:    _MediaService_AddViewerCandidate_Handler,
+		},
+		{
 			MethodName: "SetAnswer",
 			Handler:    _MediaService_SetAnswer_Handler,
+		},
+		{
+			MethodName: "SetViewerAnswer",
+			Handler:    _MediaService_SetViewerAnswer_Handler,
 		},
 		{
 			MethodName: "RequestEntry",
