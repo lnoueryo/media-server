@@ -453,7 +453,7 @@ func (s *MediaService) RequestEntry(
 	return &media.Void{}, nil
 }
 
-func (s *MediaService) AcceptInvitation(
+func (s *MediaService) ChangeMemberState(
 	ctx context.Context,
 	req *media.SpaceMemberRequest,
 ) (*media.Void, error) {
@@ -468,7 +468,7 @@ func (s *MediaService) AcceptInvitation(
 
 	jsonData, _ := json.Marshal(req.SpaceMember)
 	multicastDataChannel("room", req.SpaceId, DCEnvelope{
-		Event: "accept-invitation",
+		Event: "change-member-state",
 		Message: jsonData,
 	}, func(participant *Participant) bool {
 		return participant.Role == "owner"

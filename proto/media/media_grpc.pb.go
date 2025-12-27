@@ -27,8 +27,7 @@ const (
 	MediaService_AddViewerCandidate_FullMethodName = "/media.MediaService/AddViewerCandidate"
 	MediaService_SetAnswer_FullMethodName          = "/media.MediaService/SetAnswer"
 	MediaService_SetViewerAnswer_FullMethodName    = "/media.MediaService/SetViewerAnswer"
-	MediaService_RequestEntry_FullMethodName       = "/media.MediaService/RequestEntry"
-	MediaService_AcceptInvitation_FullMethodName   = "/media.MediaService/AcceptInvitation"
+	MediaService_ChangeMemberState_FullMethodName  = "/media.MediaService/ChangeMemberState"
 )
 
 // MediaServiceClient is the client API for MediaService service.
@@ -43,8 +42,7 @@ type MediaServiceClient interface {
 	AddViewerCandidate(ctx context.Context, in *AddCandidateRequest, opts ...grpc.CallOption) (*Void, error)
 	SetAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error)
 	SetViewerAnswer(ctx context.Context, in *SetAnswerRequest, opts ...grpc.CallOption) (*Void, error)
-	RequestEntry(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
-	AcceptInvitation(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
+	ChangeMemberState(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error)
 }
 
 type mediaServiceClient struct {
@@ -135,20 +133,10 @@ func (c *mediaServiceClient) SetViewerAnswer(ctx context.Context, in *SetAnswerR
 	return out, nil
 }
 
-func (c *mediaServiceClient) RequestEntry(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error) {
+func (c *mediaServiceClient) ChangeMemberState(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Void)
-	err := c.cc.Invoke(ctx, MediaService_RequestEntry_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *mediaServiceClient) AcceptInvitation(ctx context.Context, in *SpaceMemberRequest, opts ...grpc.CallOption) (*Void, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Void)
-	err := c.cc.Invoke(ctx, MediaService_AcceptInvitation_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, MediaService_ChangeMemberState_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -167,8 +155,7 @@ type MediaServiceServer interface {
 	AddViewerCandidate(context.Context, *AddCandidateRequest) (*Void, error)
 	SetAnswer(context.Context, *SetAnswerRequest) (*Void, error)
 	SetViewerAnswer(context.Context, *SetAnswerRequest) (*Void, error)
-	RequestEntry(context.Context, *SpaceMemberRequest) (*Void, error)
-	AcceptInvitation(context.Context, *SpaceMemberRequest) (*Void, error)
+	ChangeMemberState(context.Context, *SpaceMemberRequest) (*Void, error)
 	mustEmbedUnimplementedMediaServiceServer()
 }
 
@@ -203,11 +190,8 @@ func (UnimplementedMediaServiceServer) SetAnswer(context.Context, *SetAnswerRequ
 func (UnimplementedMediaServiceServer) SetViewerAnswer(context.Context, *SetAnswerRequest) (*Void, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetViewerAnswer not implemented")
 }
-func (UnimplementedMediaServiceServer) RequestEntry(context.Context, *SpaceMemberRequest) (*Void, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RequestEntry not implemented")
-}
-func (UnimplementedMediaServiceServer) AcceptInvitation(context.Context, *SpaceMemberRequest) (*Void, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AcceptInvitation not implemented")
+func (UnimplementedMediaServiceServer) ChangeMemberState(context.Context, *SpaceMemberRequest) (*Void, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ChangeMemberState not implemented")
 }
 func (UnimplementedMediaServiceServer) mustEmbedUnimplementedMediaServiceServer() {}
 func (UnimplementedMediaServiceServer) testEmbeddedByValue()                      {}
@@ -374,38 +358,20 @@ func _MediaService_SetViewerAnswer_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MediaService_RequestEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MediaService_ChangeMemberState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SpaceMemberRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MediaServiceServer).RequestEntry(ctx, in)
+		return srv.(MediaServiceServer).ChangeMemberState(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MediaService_RequestEntry_FullMethodName,
+		FullMethod: MediaService_ChangeMemberState_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MediaServiceServer).RequestEntry(ctx, req.(*SpaceMemberRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _MediaService_AcceptInvitation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SpaceMemberRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MediaServiceServer).AcceptInvitation(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: MediaService_AcceptInvitation_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MediaServiceServer).AcceptInvitation(ctx, req.(*SpaceMemberRequest))
+		return srv.(MediaServiceServer).ChangeMemberState(ctx, req.(*SpaceMemberRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -450,12 +416,8 @@ var MediaService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MediaService_SetViewerAnswer_Handler,
 		},
 		{
-			MethodName: "RequestEntry",
-			Handler:    _MediaService_RequestEntry_Handler,
-		},
-		{
-			MethodName: "AcceptInvitation",
-			Handler:    _MediaService_AcceptInvitation_Handler,
+			MethodName: "ChangeMemberState",
+			Handler:    _MediaService_ChangeMemberState_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
