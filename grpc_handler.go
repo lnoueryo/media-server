@@ -331,7 +331,10 @@ func (s *MediaService) AddViewerCandidate(
 	roomId := req.SpaceId
 	user := req.User
 	candidate := req.Candidate
-	room, _ := rooms.getRoom(roomId)
+	room, ok := rooms.getRoom(roomId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "room not found")
+	}
 	viewer, ok := room.viewers[user.Id]; if !ok {
 		return nil, status.Error(codes.NotFound, "participant not found")
 	}
@@ -367,7 +370,10 @@ func (s *MediaService) SetViewerAnswer(
 	roomId := req.SpaceId
 	user := req.User
 	answer := req.Answer
-	room, _ := rooms.getRoom(roomId)
+	room, ok := rooms.getRoom(roomId)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "room not found")
+	}
 	viewer, ok := room.viewers[user.Id]; if !ok {
 		return nil, status.Error(codes.NotFound, "participant not found")
 	}
