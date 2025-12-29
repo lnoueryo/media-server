@@ -12,6 +12,7 @@ import (
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
+	"github.com/sirupsen/logrus"
 	"streaming-media.jounetsism.biz/proto/media"
 )
 
@@ -270,6 +271,7 @@ func signalPeerConnections(room *Room) {
                 return true
             }
             // gRPCで送信
+            logrus.Info("Sending new offer to participant %s in room %s", p.ID, room.ID)
             offerJSON, _ := json.Marshal(offer)
             Unicast(room.ID, p.ID, "offer", offerJSON)
         }

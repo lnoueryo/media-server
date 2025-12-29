@@ -25,7 +25,7 @@ var (
 
 func initSpaceServiceClient() {
     conn, err := grpc.NewClient(
-        "dns:///streaming-backend:50051",
+        applicationServerOrigin,
         grpc.WithTransportCredentials(insecure.NewCredentials()),
     )
     if err != nil {
@@ -37,7 +37,7 @@ func initSpaceServiceClient() {
 
 func initRoomClient() {
     conn, err := grpc.Dial(
-        "dns:///streaming-signaling:50051",
+        signalingServerOrigin,
         grpc.WithTransportCredentials(insecure.NewCredentials()),
     )
     if err != nil {
