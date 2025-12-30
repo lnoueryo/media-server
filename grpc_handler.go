@@ -261,6 +261,9 @@ func (s *MediaService) CreateViewerPeer(
 		}
 
 		broadcastDataChannel("room", roomId, user.Id, env)
+		if env.Event == "chat" {
+			room.messages = append(room.messages, json.RawMessage(env.Message))
+		}
 	})
 
 	room.listLock.Lock()

@@ -57,6 +57,7 @@ type Room struct {
     trackParticipants map[string]*TrackParticipant
     viewers       map[string]*Viewer
 	cancelFunc    context.CancelFunc
+    messages      []json.RawMessage
 }
 
 func (r *Room) GetSliceParticipants() []*media.Participant {
