@@ -25,7 +25,7 @@ func (s *MediaService) CreatePeer(
 ) (*media.GetRoomResponse, error) {
 	roomId := req.GetSpaceId()
 	user := req.GetUser()
-	spaceMember := req.GetSpaceMember()
+	spaceUser := req.GetSpaceUser()
 	room := rooms.getOrCreate(roomId)
 	_, ok := room.participants[user.Id];
 	if ok {
@@ -97,8 +97,8 @@ func (s *MediaService) CreatePeer(
 	// dc.Send(b)
 	room.listLock.Lock()
 	room.participants[user.Id] = &Participant{
-		spaceMember.GetId(),
-		spaceMember.GetRole(),
+		spaceUser.GetId(),
+		spaceUser.GetRole(),
 		UserInfo{
 			user.GetId(),
 			user.GetEmail(),
@@ -440,7 +440,7 @@ func (s *MediaService) RemoveParticipant(
 
 func (s *MediaService) RequestEntry(
 	ctx context.Context,
-	req *media.SpaceMemberRequest,
+	req *media.SpaceUserRequest,
 ) (*media.Void, error) {
 	_, ok := rooms.getRoom(req.SpaceId)
 	if !ok {
@@ -451,7 +451,7 @@ func (s *MediaService) RequestEntry(
 		return nil, status.Error(codes.NotFound, "roomが存在しません")
 	}
 
-	jsonData, _ := json.Marshal(req.SpaceMember)
+	jsonData, _ := json.Marshal(req.SpaceUser)
 	multicastDataChannel("room", req.SpaceId, DCEnvelope{
 		Event: "participant-request",
 		Message: jsonData,
@@ -464,7 +464,7 @@ func (s *MediaService) RequestEntry(
 
 func (s *MediaService) ChangeMemberState(
 	ctx context.Context,
-	req *media.SpaceMemberRequest,
+	req *media.SpaceUserRequest,
 ) (*media.Void, error) {
 	_, ok := rooms.getRoom(req.SpaceId)
 	if !ok {
@@ -475,7 +475,7 @@ func (s *MediaService) ChangeMemberState(
 		return nil, status.Error(codes.NotFound, "roomが存在しません")
 	}
 
-	jsonData, _ := json.Marshal(req.SpaceMember)
+	jsonData, _ := json.Marshal(req.SpaceUser)
 	multicastDataChannel("room", req.SpaceId, DCEnvelope{
 		Event: "change-member-state",
 		Message: jsonData,

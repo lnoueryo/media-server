@@ -272,9 +272,12 @@ func signalPeerConnections(room *Room) {
                 return true
             }
             // gRPCで送信
-            logrus.Info("Sending new offer to participant %s in room %s", p.ID, room.ID)
+
             offerJSON, _ := json.Marshal(offer)
-            Unicast(room.ID, p.ID, "offer", offerJSON)
+            err = Unicast(room.ID, p.ID, "offer", offerJSON); if err != nil {
+                logrus.Error("Failed to send offer:", err)
+                p.PC.Close()
+            }
         }
         return false
     }
