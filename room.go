@@ -48,16 +48,23 @@ type TrackParticipant struct{
     TrackID  string `json:"trackId"`
 }
 
+type RemoteTracks struct {
+	id    string
+	video *webrtc.TrackRemote
+	audio *webrtc.TrackRemote
+}
+
 type Room struct {
 	ID           string
 	listLock     sync.Mutex
 	participants  map[string]*Participant
 	trackLocals   map[string]*webrtc.TrackLocalStaticRTP
-	trackRemotes  map[string]*webrtc.TrackRemote
+	trackRemotes map[string]*RemoteTracks
     trackParticipants map[string]*TrackParticipant
     viewers       map[string]*Viewer
 	cancelFunc    context.CancelFunc
     messages      []json.RawMessage
+    recorder     *Recorder
 }
 
 func (r *Room) GetSliceParticipants() []*media.Participant {
@@ -100,9 +107,10 @@ func (r *Rooms) getOrCreate(id string) *Room {
         ID:            id,
         participants:  make(map[string]*Participant),
         trackLocals:   make(map[string]*webrtc.TrackLocalStaticRTP),
-        trackRemotes:  make(map[string]*webrtc.TrackRemote),
+        trackRemotes:  make(map[string]*RemoteTracks),
         trackParticipants: make(map[string]*TrackParticipant),
         viewers:       make(map[string]*Viewer),
+        messages:      []json.RawMessage{},
     }
     r.item[id] = room
 
@@ -152,9 +160,31 @@ func addTrack(room *Room, t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
     }
 
     room.trackLocals[t.ID()] = trackLocal
-    room.trackRemotes[t.ID()] = t
+    // room.trackRemotes[t.ID()] = t
 
     return trackLocal
+}
+
+func addRemoteTrack(room *Room, t *webrtc.TrackRemote) *RemoteTracks {
+    room.listLock.Lock()
+    defer func() {
+        room.listLock.Unlock()
+        signalPeerConnections(room)
+    }()
+    trackRemote, ok := room.trackRemotes[t.StreamID()]
+    if !ok {
+        trackRemote = &RemoteTracks{
+            id: t.StreamID(),
+        }
+    }
+    if t.Kind() == webrtc.RTPCodecTypeAudio {
+        trackRemote.audio = t
+    }
+    if t.Kind() == webrtc.RTPCodecTypeVideo {
+        trackRemote.video = t
+    }
+    room.trackRemotes[t.StreamID()] = trackRemote
+    return trackRemote
 }
 
 func removeTrack(room *Room, t *webrtc.TrackLocalStaticRTP) {
@@ -164,7 +194,15 @@ func removeTrack(room *Room, t *webrtc.TrackLocalStaticRTP) {
         signalPeerConnections(room)
     }()
     delete(room.trackLocals, t.ID())
-    delete(room.trackRemotes, t.ID())
+}
+
+func removeRemoteTrack(room *Room, t *webrtc.TrackRemote) {
+    room.listLock.Lock()
+    defer func() {
+        room.listLock.Unlock()
+        signalPeerConnections(room)
+    }()
+    delete(room.trackRemotes, t.StreamID())
 }
 
 // --------------------------------------------------------

@@ -86,6 +86,37 @@ func (s *MediaService) CreatePeer(
 			return
 		}
 
+		if env.Event == "record-start" {
+			if room.recorder != nil {
+				return
+			}
+			room.recorder = NewRecorder()
+
+			for _, remoteTracks := range room.trackRemotes {
+				room.recorder.Start(remoteTracks)
+			}
+			log.Info("recording started")
+		}
+
+		if env.Event == "record-stop" {
+
+			if room.recorder == nil {
+				return
+			}
+			var stop struct {
+				StreamID      string `json:"streamId"`
+				LastTimestamp uint64 `json:"lastTimestamp"`
+			}
+			if err := json.Unmarshal(env.Message, &stop); err != nil {
+				log.Warnf("invalid dc message: %v", err)
+				return
+			}
+			trackRemotes := room.trackRemotes[stop.StreamID]
+			room.recorder.Stop(trackRemotes.video.ID(), stop.LastTimestamp)
+			room.recorder.Stop(trackRemotes.audio.ID(), stop.LastTimestamp)
+			room.recorder = nil
+			log.Info("record stop scheduled")
+		}
 		broadcastDataChannel("room", roomId, user.Id, env)
 	})
 	// payload := map[string]any{
@@ -156,6 +187,11 @@ func (s *MediaService) CreatePeer(
 		if trackLocal == nil {
 			return
 		}
+		trackRemote := addRemoteTrack(room, t)
+		if trackRemote == nil {
+			return
+		}
+
 		track := &TrackParticipant{
 			UserInfo{
 				user.GetId(),
@@ -170,6 +206,7 @@ func (s *MediaService) CreatePeer(
 		jsonData, _ := json.Marshal(room.trackParticipants)
 		defer func() {
 			removeTrack(room, trackLocal)
+			removeRemoteTrack(room, t)
 			delete(room.trackParticipants, t.StreamID())
 		}()
 		// BroadcastToRoom(roomId, "track-participant", jsonData)
@@ -184,6 +221,9 @@ func (s *MediaService) CreatePeer(
 		for {
 			n, _, err := t.Read(buf)
 			if err != nil {
+				if room.recorder != nil {
+					delete(room.recorder.recordChannels, t.ID())
+				}
 				return
 			}
 
@@ -194,6 +234,14 @@ func (s *MediaService) CreatePeer(
 			pkt.Extension = false
 			pkt.Extensions = nil
 			trackLocal.WriteRTP(pkt)
+			if room.recorder != nil {
+				pktCopy := make([]byte, n)
+				copy(pktCopy, buf[:n])
+				channel, ok := room.recorder.recordChannels[t.ID()]
+				if ok {
+					channel <- pktCopy
+				}
+			}
 		}
 	})
 
