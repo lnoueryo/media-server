@@ -14,6 +14,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/sirupsen/logrus"
 	"streaming-media.jounetsism.biz/proto/media"
+	"streaming-media.jounetsism.biz/record"
 )
 
 var rooms = &Rooms{
@@ -59,12 +60,12 @@ type Room struct {
 	listLock     sync.Mutex
 	participants  map[string]*Participant
 	trackLocals   map[string]*webrtc.TrackLocalStaticRTP
-	trackRemotes map[string]*RemoteTracks
+	trackRemotes map[string]map[string]*webrtc.TrackRemote
     trackParticipants map[string]*TrackParticipant
     viewers       map[string]*Viewer
 	cancelFunc    context.CancelFunc
     messages      []json.RawMessage
-    recorder     *Recorder
+    recorder     record.IRecorder
 }
 
 func (r *Room) GetSliceParticipants() []*media.Participant {
@@ -107,7 +108,7 @@ func (r *Rooms) getOrCreate(id string) *Room {
         ID:            id,
         participants:  make(map[string]*Participant),
         trackLocals:   make(map[string]*webrtc.TrackLocalStaticRTP),
-        trackRemotes:  make(map[string]*RemoteTracks),
+        trackRemotes:  make(map[string]map[string]*webrtc.TrackRemote),
         trackParticipants: make(map[string]*TrackParticipant),
         viewers:       make(map[string]*Viewer),
         messages:      []json.RawMessage{},
@@ -165,26 +166,17 @@ func addTrack(room *Room, t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
     return trackLocal
 }
 
-func addRemoteTrack(room *Room, t *webrtc.TrackRemote) *RemoteTracks {
+func addRemoteTrack(room *Room, userId string, t *webrtc.TrackRemote) *webrtc.TrackRemote {
     room.listLock.Lock()
     defer func() {
         room.listLock.Unlock()
         signalPeerConnections(room)
     }()
-    trackRemote, ok := room.trackRemotes[t.StreamID()]
-    if !ok {
-        trackRemote = &RemoteTracks{
-            id: t.StreamID(),
-        }
+    if room.trackRemotes[userId] == nil {
+        room.trackRemotes[userId] = make(map[string]*webrtc.TrackRemote)
     }
-    if t.Kind() == webrtc.RTPCodecTypeAudio {
-        trackRemote.audio = t
-    }
-    if t.Kind() == webrtc.RTPCodecTypeVideo {
-        trackRemote.video = t
-    }
-    room.trackRemotes[t.StreamID()] = trackRemote
-    return trackRemote
+    room.trackRemotes[userId][t.ID()] = t
+    return t
 }
 
 func removeTrack(room *Room, t *webrtc.TrackLocalStaticRTP) {
@@ -196,13 +188,16 @@ func removeTrack(room *Room, t *webrtc.TrackLocalStaticRTP) {
     delete(room.trackLocals, t.ID())
 }
 
-func removeRemoteTrack(room *Room, t *webrtc.TrackRemote) {
+func removeRemoteTrack(room *Room, userId string, t *webrtc.TrackRemote) {
     room.listLock.Lock()
     defer func() {
         room.listLock.Unlock()
         signalPeerConnections(room)
     }()
-    delete(room.trackRemotes, t.StreamID())
+    delete(room.trackRemotes[userId], t.ID())
+    if len(room.trackRemotes[userId]) == 0 {
+        delete(room.trackRemotes, userId)
+    }
 }
 
 // --------------------------------------------------------

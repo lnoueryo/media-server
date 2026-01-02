@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	media "streaming-media.jounetsism.biz/proto/media"
+	"streaming-media.jounetsism.biz/record/ondemand"
 )
 
 type MediaService struct {
@@ -90,30 +91,17 @@ func (s *MediaService) CreatePeer(
 			if room.recorder != nil {
 				return
 			}
-			room.recorder = NewRecorder()
+			room.recorder = ondemand.NewRecorder(roomId)
 
-			for _, remoteTracks := range room.trackRemotes {
-				room.recorder.Start(remoteTracks)
-			}
+			go room.recorder.Start(room.trackRemotes)
 			log.Info("recording started")
 		}
 
 		if env.Event == "record-stop" {
-
 			if room.recorder == nil {
 				return
 			}
-			var stop struct {
-				StreamID      string `json:"streamId"`
-				LastTimestamp uint64 `json:"lastTimestamp"`
-			}
-			if err := json.Unmarshal(env.Message, &stop); err != nil {
-				log.Warnf("invalid dc message: %v", err)
-				return
-			}
-			trackRemotes := room.trackRemotes[stop.StreamID]
-			room.recorder.Stop(trackRemotes.video.ID(), stop.LastTimestamp)
-			room.recorder.Stop(trackRemotes.audio.ID(), stop.LastTimestamp)
+			room.recorder.Stop()
 			room.recorder = nil
 			log.Info("record stop scheduled")
 		}
@@ -178,7 +166,7 @@ func (s *MediaService) CreatePeer(
 
 	// ----- track handler -----
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		log.Infof("Got remote track: %s %s %s %s %s", t.Kind(), t.ID(), t.StreamID(), t.Msid(), t.RID())
+		log.Infof("Got remote track: %s %s %s %s %s %s %s", t.Kind(), t.ID(), t.StreamID(), t.Msid(), t.RID(), t.Codec().MimeType, t.Codec().ClockRate)
 		room, ok := rooms.getRoom(roomId)
 		if !ok {
 			return
@@ -187,7 +175,7 @@ func (s *MediaService) CreatePeer(
 		if trackLocal == nil {
 			return
 		}
-		trackRemote := addRemoteTrack(room, t)
+		trackRemote := addRemoteTrack(room, user.Id, t)
 		if trackRemote == nil {
 			return
 		}
@@ -206,7 +194,7 @@ func (s *MediaService) CreatePeer(
 		jsonData, _ := json.Marshal(room.trackParticipants)
 		defer func() {
 			removeTrack(room, trackLocal)
-			removeRemoteTrack(room, t)
+			removeRemoteTrack(room, user.Id, t)
 			delete(room.trackParticipants, t.StreamID())
 		}()
 		// BroadcastToRoom(roomId, "track-participant", jsonData)
@@ -217,13 +205,13 @@ func (s *MediaService) CreatePeer(
 
 		buf := make([]byte, 1500)
 		pkt := &rtp.Packet{}
-
+		if room.recorder != nil {
+			room.recorder.AddParticipant(user.Id, t)
+			defer room.recorder.RemoveParticipant(user.Id, t)
+		}
 		for {
 			n, _, err := t.Read(buf)
 			if err != nil {
-				if room.recorder != nil {
-					delete(room.recorder.recordChannels, t.ID())
-				}
 				return
 			}
 
@@ -235,9 +223,12 @@ func (s *MediaService) CreatePeer(
 			pkt.Extensions = nil
 			trackLocal.WriteRTP(pkt)
 			if room.recorder != nil {
-				pktCopy := make([]byte, n)
-				copy(pktCopy, buf[:n])
-				channel, ok := room.recorder.recordChannels[t.ID()]
+				bufCopy := make([]byte, n)
+				copy(bufCopy, buf[:n])
+
+				pktCopy := &rtp.Packet{}
+				pktCopy.Unmarshal(bufCopy)
+				channel, ok := room.recorder.GetPacketChannels()[t.ID()]
 				if ok {
 					channel <- pktCopy
 				}
