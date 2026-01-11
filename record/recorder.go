@@ -24,6 +24,8 @@ type RemoteTracks struct {
 type MediaPair struct {
 	Video string
 	Audio string
+	StartTime time.Time
+	EndTime time.Time
 }
 
 type IRecorder interface {
@@ -187,9 +189,6 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
-
-func VideoKind() int { return 1 } // 呼び出し側互換用（あなたの Segment.Kind の型に合わせて消してOK）
-func AudioKind() int { return 2 } // 同上
 
 func CreateLayoutForTimelines(inputs []InputIndex, cellW, cellH int) string {
 	if cellW == 0 {

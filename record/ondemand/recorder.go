@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,7 +25,9 @@ type Recorder struct {
 	cancelFuncs map[string]context.CancelFunc
 	outputDir string
 	startTime time.Time
-	segments map[string]map[string]*record.Segment
+	endTime time.Time
+	// userId -> trackId -> Segment
+	segments map[string]map[string]map[string]*record.Segment
 }
 
 func NewRecorder(roomId string) record.IRecorder {
@@ -38,7 +41,7 @@ func NewRecorder(roomId string) record.IRecorder {
 		cancelFuncs: make(map[string]context.CancelFunc),
 		outputDir: outputDir,
 		startTime: currentTime,
-		segments: make(map[string]map[string]*record.Segment),
+		segments: make(map[string]map[string]map[string]*record.Segment),
 	}
 }
 
@@ -56,14 +59,17 @@ func (r *Recorder) Start(tracks map[string]map[string]*webrtc.TrackRemote) {
 func (r *Recorder) Stop() {
 	now := time.Now()
 	r.mu.Lock()
-	for userId, segs := range r.segments {
-		for trackId, seg := range segs {
-			if seg.EndTime.IsZero() {
-				seg.EndTime = now
-				r.segments[userId][trackId] = seg
+	for userId, userSegs := range r.segments {
+		for streamId, segs := range userSegs {
+			for trackId, seg := range segs {
+				if seg.EndTime.IsZero() {
+					seg.EndTime = now
+					r.segments[userId][streamId][trackId] = seg
+				}
 			}
 		}
 	}
+	r.endTime = now
 	r.mu.Unlock()
 
 	close(r.stop)
@@ -78,16 +84,19 @@ func (r *Recorder) GetPacketChannels() map[string]chan *rtp.Packet {
 func (r *Recorder) createSegments(
     tracks map[string]map[string]*webrtc.TrackRemote,
     startTime time.Time,
-) map[string]map[string]*record.Segment {
-    segments := make(map[string]map[string]*record.Segment)
+) map[string]map[string]map[string]*record.Segment {
+    segments := make(map[string]map[string]map[string]*record.Segment)
 
     for userId, userTracks := range tracks {
         if _, exists := segments[userId]; !exists {
-            segments[userId] = make(map[string]*record.Segment)
+            segments[userId] = make(map[string]map[string]*record.Segment)
         }
-		r.segments[userId] = make(map[string]*record.Segment)
+		r.segments[userId] = make(map[string]map[string]*record.Segment)
         for _, t := range userTracks {
-            r.segments[userId][t.ID()] = record.NewSegment(userId, t, startTime)
+			if _, exists := r.segments[userId][t.StreamID()]; !exists {
+				r.segments[userId][t.StreamID()] = make(map[string]*record.Segment)
+			}
+            r.segments[userId][t.StreamID()][t.ID()] = record.NewSegment(userId, t, startTime)
         }
     }
 
@@ -134,9 +143,12 @@ func (r *Recorder) record(ctx context.Context, t *webrtc.TrackRemote, writer RTP
 
 func (r *Recorder) AddParticipant(userId string, t *webrtc.TrackRemote) {
 	if r.segments[userId] == nil {
-		r.segments[userId] = make(map[string]*record.Segment)
+		r.segments[userId] = make(map[string]map[string]*record.Segment)
 	}
-	r.segments[userId][t.ID()] = record.NewSegment(userId, t, time.Time{})
+	if r.segments[userId][t.StreamID()] == nil {
+		r.segments[userId][t.StreamID()] = make(map[string]*record.Segment)
+	}
+	r.segments[userId][t.StreamID()][t.ID()] = record.NewSegment(userId, t, time.Time{})
 	r.startRecord(userId, t)
 }
 
@@ -155,182 +167,258 @@ func (r *Recorder) RemoveParticipant(userId string, t *webrtc.TrackRemote) {
 
 	// set EndTime instead of deleting segment
 	if userSegs, ok := r.segments[userId]; ok {
-		if seg, exists := userSegs[t.ID()]; exists {
-			seg.EndTime = time.Now()
-			r.segments[userId][t.ID()] = seg
+		if streamSegs, exists := userSegs[t.StreamID()]; exists {
+			if seg, exists := streamSegs[t.ID()]; exists {
+				seg.EndTime = time.Now()
+				r.segments[userId][t.StreamID()][t.ID()] = seg
+			}
 		}
 	}
 }
 
-func (r *Recorder) MergeAllToMP4() error {
+// func (r *Recorder) MergeAllToMP4() error {
 
-	pairs := record.CollectMediaPairs(r.segments, r.outputDir)
-	if len(pairs) == 0 {
-		return fmt.Errorf("no tracks")
-	}
+// 	pairs := record.CollectMediaPairs(r.segments, r.outputDir)
+// 	if len(pairs) == 0 {
+// 		return fmt.Errorf("no tracks")
+// 	}
 
-	// ---- single ----
-	if len(pairs) == 1 {
-		args := []string{"-y"}
-		ok := record.AddFFmpegInputs(&args, pairs[0], 0, 0)
-		if !ok {
-			return fmt.Errorf("no valid media")
+// 	// ---- single ----
+// 	if len(pairs) == 1 {
+// 		args := []string{"-y"}
+// 		ok := record.AddFFmpegInputs(&args, pairs[0], 0, 0)
+// 		if !ok {
+// 			return fmt.Errorf("no valid media")
+// 		}
+
+// 		args = append(args,
+// 			"-c:v", "libx264", "-preset", "fast", "-crf", "23",
+// 			"-c:a", "aac", "-b:a", "128k",
+// 			"-movflags", "+faststart",
+// 			filepath.Join(r.outputDir, "merged.mp4"),
+// 		)
+
+// 		cmd := exec.Command("ffmpeg", args...)
+// 		cmd.Stdout = os.Stdout
+// 		cmd.Stderr = os.Stderr
+// 		return cmd.Run()
+// 	}
+
+// 	// ---- multi ----
+// 	args := []string{"-y"}
+// 	type inputIndex struct{ v, a int }
+// 	inputs := []record.InputIndex{}
+// 	idx := 0
+
+// 	for _, p := range pairs {
+// 		if record.AddFFmpegInputs(&args, p, 0, 0) {
+// 			inputs = append(inputs, record.InputIndex{V: idx, A: idx + 1})
+// 			idx += 2
+// 		}
+// 	}
+
+// 	n := len(inputs)
+// 	if n == 0 {
+// 		return fmt.Errorf("no valid inputs")
+// 	}
+
+// 	filter := record.CreateLayout(inputs, 0, 0)
+
+// 	args = append(args,
+// 		"-filter_complex", filter,
+// 		"-map", "[v]",
+// 		"-map", "[a]",
+// 		"-c:v", "libx264",
+// 		"-preset", "fast",
+// 		"-crf", "23",
+// 		"-c:a", "aac",
+// 		"-b:a", "128k",
+// 		"-movflags", "+faststart",
+// 		filepath.Join(r.outputDir, "merged.mp4"),
+// 	)
+
+// 	cmd := exec.Command("ffmpeg", args...)
+// 	cmd.Stdout = os.Stdout
+// 	cmd.Stderr = os.Stderr
+// 	return cmd.Run()
+// }
+
+func (r *Recorder) MergeWithBlanksToMP4() error {
+	// 各ユーザーごとに body.mp4 を作るだけ
+	userVideos := []string{}
+
+	for userId, userSegs := range r.segments {
+		if len(userSegs) == 0 {
+			continue
 		}
-
-		args = append(args,
-			"-c:v", "libx264", "-preset", "fast", "-crf", "23",
-			"-c:a", "aac", "-b:a", "128k",
-			"-movflags", "+faststart",
-			filepath.Join(r.outputDir, "merged.mp4"),
-		)
-
-		cmd := exec.Command("ffmpeg", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
-	}
-
-	// ---- multi ----
-	args := []string{"-y"}
-	type inputIndex struct{ v, a int }
-	inputs := []record.InputIndex{}
-	idx := 0
-
-	for _, p := range pairs {
-		if record.AddFFmpegInputs(&args, p, 0, 0) {
-			inputs = append(inputs, record.InputIndex{V: idx, A: idx + 1})
-			idx += 2
+		mediaPairs := []record.MediaPair{}
+		for streamId, segs := range userSegs {
+			mediaPair := record.MediaPair{
+				Video: "",
+				Audio: "",
+			}
+			for trackId, seg := range segs {
+				if seg.EndTime.IsZero() {
+					continue
+				}
+				if mediaPair.StartTime.IsZero() || seg.StartTime.Before(mediaPair.StartTime) {
+					mediaPair.StartTime = seg.StartTime
+				}
+				if mediaPair.EndTime.IsZero() || seg.EndTime.After(mediaPair.EndTime) {
+					mediaPair.EndTime = seg.EndTime
+				}
+				base := filepath.Join(r.outputDir, userId, streamId)
+				if seg.Kind == webrtc.RTPCodecTypeVideo {
+					mediaPair.Video = filepath.Join(base, trackId+".ivf")
+				}
+				if seg.Kind == webrtc.RTPCodecTypeAudio {
+					mediaPair.Audio = filepath.Join(base, trackId+".ogg")
+				}
+			}
+			if mediaPair.Video == "" && mediaPair.Audio == "" {
+				continue
+			}
+			mediaPairs = append(mediaPairs, mediaPair)
 		}
+		if len(mediaPairs) == 0 {
+			continue
+		}
+		// if len(mediaPairs) == 1 {
+		// 	//　TODO: 途中参加・途中退室の処理
+		// 	out := filepath.Join(r.outputDir, userId, userId+"_body_1.mp4")
+		// 	// out := filepath.Join(r.outputDir, userId, userId+"_body"+strconv.Itoa(index)+".mp4")
+		// 	if err := buildBodyMP4(out, mediaPairs[0]); err != nil {
+		// 		return err
+		// 	}
+		// 	userVideos = append(userVideos, out)
+		// 	continue
+		// }
+
+		// 途中参加・途中退室をconcat
+		lastStartTime := r.startTime
+		list := filepath.Join(r.outputDir, userId, "concat_list.txt")
+		files := []string{}
+		const joinTolerance = 300 * time.Millisecond
+		const endTolerance  = 300 * time.Millisecond
+
+		for i, mp := range mediaPairs {
+
+			// ---------- 途中参加（前の区間との gap） ----------
+			if mp.StartTime.Sub(lastStartTime) > joinTolerance {
+				blackOut := filepath.Join(
+					r.outputDir,
+					userId,
+					userId+"_preblack_"+strconv.Itoa(i)+".mp4",
+				)
+
+				buildBlackMP4(
+					blackOut,
+					mp.StartTime.Sub(lastStartTime),
+					640,
+					480,
+				)
+
+				files = append(files, blackOut)
+			}
+
+			// ---------- 本体 ----------
+			out := filepath.Join(
+				r.outputDir,
+				userId,
+				userId+"_body_"+strconv.Itoa(i)+".mp4",
+			)
+
+			if err := buildBodyMP4(out, mp); err != nil {
+				return err
+			}
+
+			files = append(files, out)
+
+			// ---------- last mp のみ：退出後 black ----------
+			if i == len(mediaPairs)-1 {
+
+				diff := r.endTime.Sub(mp.EndTime)
+
+				if diff > endTolerance {
+					// 退出後〜録画終了まで black
+					blackOut := filepath.Join(
+						r.outputDir,
+						userId,
+						userId+"_postblack.mp4",
+					)
+
+					buildBlackMP4(
+						blackOut,
+						diff,
+						640,
+						480,
+					)
+
+					files = append(files, blackOut)
+				}
+			}
+
+			// 次の比較用
+			lastStartTime = mp.EndTime
+		}
+		if err := writeConcatList(list, files); err != nil {
+			return err
+		}
+		out := filepath.Join(r.outputDir, userId, userId+"_body_new.mp4")
+		ffmpegConcatReencode(list, out)
+		userVideos = append(userVideos, out)
 	}
 
-	n := len(inputs)
-	if n == 0 {
-		return fmt.Errorf("no valid inputs")
+	if len(userVideos) == 0 {
+		return fmt.Errorf("no user videos")
 	}
 
-	filter := record.CreateLayout(inputs, 0, 0)
+	// 1人ならそのまま
+	if len(userVideos) == 1 {
+		return ffmpegCopy(userVideos[0], filepath.Join(r.outputDir, "merge_all.mp4"))
+	}
 
-	args = append(args,
-		"-filter_complex", filter,
-		"-map", "[v]",
-		"-map", "[a]",
-		"-c:v", "libx264",
-		"-preset", "fast",
-		"-crf", "23",
-		"-c:a", "aac",
-		"-b:a", "128k",
-		"-movflags", "+faststart",
-		filepath.Join(r.outputDir, "merged.mp4"),
+	// 複数人 → レイアウト合成
+	return mergeTimelinesToGrid(
+		userVideos,
+		filepath.Join(r.outputDir, "merge_all.mp4"),
 	)
+}
 
+func ffmpegConcatReencode(listFile, out string) error {
+	// concat demuxer -> 再エンコードで確実に（copyは環境で壊れやすい）
+	args := []string{
+		"-y",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", listFile,
+		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
+		"-c:a", "aac", "-b:a", "128k",
+		"-movflags", "+faststart",
+		out,
+	}
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func (r *Recorder) MergeWithBlanksToMP4() error {
-	if r.startTime.IsZero() {
-		return fmt.Errorf("global startTime not set")
-	}
-
-	// 1) 各ユーザーごとに「開始0:00に揃えた timeline.mp4」を作る（ブランクはファイル作る方式）
-	timelineFiles := []string{}
-
-	for userId, tracks := range r.segments {
-		userStart := time.Time{}
-		for _, seg := range tracks {
-			if userStart.IsZero() || seg.StartTime.Before(userStart) {
-				userStart = seg.StartTime
-			}
-		}
-		if userStart.IsZero() {
-			continue
-		}
-
-		// このユーザーの video / audio パス
-		vidPath, audPath := "", ""
-		for trackId, seg := range tracks {
-			base := filepath.Join(r.outputDir, userId, seg.StreamID)
-			if seg.Kind == webrtc.RTPCodecTypeVideo {
-				vidPath = filepath.Join(base, trackId+".ivf")
-			} else if seg.Kind == webrtc.RTPCodecTypeAudio {
-				audPath = filepath.Join(base, trackId+".ogg")
-			}
-		}
-
-		// body.mp4（video/ audio どちらか無くても AddFFmpegInputs で補完）
-		userBody := filepath.Join(r.outputDir, userId+"_body.mp4")
-		if err := ensureDir(filepath.Dir(userBody)); err != nil {
-			return err
-		}
-		if err := buildBodyMP4(userBody, record.MediaPair{Video: vidPath, Audio: audPath}); err != nil {
-			return err
-		}
-
-		// ブランク必要なら blank.mp4 作成して concat で timeline.mp4 にする（開始0:00に揃う）
-		needBlank := userStart.After(r.startTime)
-		userTimeline := filepath.Join(r.outputDir, userId+"_timeline.mp4")
-
-		if !needBlank {
-			// timeline = body（絶対パスで統一）
-			absBody, _ := filepath.Abs(userBody)
-			absTimeline, _ := filepath.Abs(userTimeline)
-			if absBody != absTimeline {
-				// copy でOK（同じコーデックになるように body は常にx264+aacで作っている）
-				if err := ffmpegCopy(absBody, absTimeline); err != nil {
-					return err
-				}
-			}
-		} else {
-			blankDur := userStart.Sub(r.startTime)
-			if blankDur < 0 {
-				blankDur = 0
-			}
-
-			userBlank := filepath.Join(r.outputDir, userId+"_blank.mp4")
-			if err := buildBlankMP4(userBlank, blankDur, 640, 480); err != nil {
-				return err
-			}
-
-			absBlank, _ := filepath.Abs(userBlank)
-			absBody, _ := filepath.Abs(userBody)
-			absTimeline, _ := filepath.Abs(userTimeline)
-
-			// concat list（絶対パス）
-			listFile := filepath.Join(r.outputDir, userId+"_list.txt")
-			if err := writeConcatList(listFile, []string{absBlank, absBody}); err != nil {
-				return err
-			}
-
-			// concat -> timeline（※ copy は失敗しやすいので再エンコードで確実に）
-			if err := ffmpegConcatReencode(listFile, absTimeline); err != nil {
-				return err
-			}
-		}
-
-		absTimeline, _ := filepath.Abs(userTimeline)
-		if !fileExists(absTimeline) {
-			return fmt.Errorf("timeline not created: %s", absTimeline)
-		}
-		timelineFiles = append(timelineFiles, absTimeline)
-	}
-
-	if len(timelineFiles) == 0 {
-		return fmt.Errorf("no timelines")
-	}
-
-	// 2) timeline.mp4 を最初から人数分で同時レイアウト合成して merge_all.mp4
-	//    ※ concat じゃない。ここが「2人なら2枠」。
-	finalOut := filepath.Join(r.outputDir, "merge_all.mp4")
-	absOut, _ := filepath.Abs(finalOut)
-	if err := mergeTimelinesToGrid(timelineFiles, absOut); err != nil {
+func writeConcatList(path string, files []string) error {
+	if err := ensureDir(filepath.Dir(path)); err != nil {
 		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for _, p := range files {
+		abs, _ := filepath.Abs(p)
+		fmt.Fprintf(f, "file '%s'\n", abs)
 	}
 	return nil
 }
-
-// ---- helpers ----
 
 func mergeTimelinesToGrid(timelines []string, out string) error {
 	n := len(timelines)
@@ -396,7 +484,7 @@ func buildBodyMP4(out string, pair record.MediaPair) error {
 	return cmd.Run()
 }
 
-func buildBlankMP4(out string, dur time.Duration, w, h int) error {
+func buildBlackMP4(out string, dur time.Duration, w, h int) error {
 	secs := dur.Seconds()
 	if secs < 0 {
 		secs = 0
@@ -425,46 +513,6 @@ func ffmpegCopy(in, out string) error {
 	return cmd.Run()
 }
 
-func ffmpegConcatReencode(listFile, out string) error {
-	// concat demuxer -> 再エンコードで確実に（copyは環境で壊れやすい）
-	args := []string{
-		"-y",
-		"-f", "concat",
-		"-safe", "0",
-		"-i", listFile,
-		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
-		"-c:a", "aac", "-b:a", "128k",
-		"-movflags", "+faststart",
-		out,
-	}
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func writeConcatList(path string, files []string) error {
-	if err := ensureDir(filepath.Dir(path)); err != nil {
-		return err
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	for _, p := range files {
-		abs, _ := filepath.Abs(p)
-		fmt.Fprintf(f, "file '%s'\n", abs)
-	}
-	return nil
-}
-
 func ensureDir(dir string) error {
 	return os.MkdirAll(dir, 0755)
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
