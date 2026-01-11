@@ -3,9 +3,9 @@ package ondemand
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -26,13 +26,13 @@ type Recorder struct {
 	outputDir string
 	startTime time.Time
 	endTime time.Time
-	// userId -> trackId -> Segment
+	// userId -> streamId -> trackId
 	segments map[string]map[string]map[string]*record.Segment
 }
 
 func NewRecorder(roomId string) record.IRecorder {
 	currentTime := time.Now()
-	outputDir := "./recordings/" + roomId + "/" + currentTime.Format("20060102-150405")
+	outputDir := os.Getenv("MEDIA_TMP_PATH") + "/" + roomId
 	os.MkdirAll(outputDir, 0755)
 	return &Recorder{
 		roomId: roomId,
@@ -283,16 +283,6 @@ func (r *Recorder) MergeWithBlanksToMP4() error {
 		if len(mediaPairs) == 0 {
 			continue
 		}
-		// if len(mediaPairs) == 1 {
-		// 	//　TODO: 途中参加・途中退室の処理
-		// 	out := filepath.Join(r.outputDir, userId, userId+"_body_1.mp4")
-		// 	// out := filepath.Join(r.outputDir, userId, userId+"_body"+strconv.Itoa(index)+".mp4")
-		// 	if err := buildBodyMP4(out, mediaPairs[0]); err != nil {
-		// 		return err
-		// 	}
-		// 	userVideos = append(userVideos, out)
-		// 	continue
-		// }
 
 		// 途中参加・途中退室をconcat
 		lastStartTime := r.startTime
@@ -334,7 +324,6 @@ func (r *Recorder) MergeWithBlanksToMP4() error {
 
 			files = append(files, out)
 
-			// ---------- last mp のみ：退出後 black ----------
 			if i == len(mediaPairs)-1 {
 
 				diff := r.endTime.Sub(mp.EndTime)
@@ -373,146 +362,60 @@ func (r *Recorder) MergeWithBlanksToMP4() error {
 		return fmt.Errorf("no user videos")
 	}
 
+	mergeAllPath := filepath.Join(r.outputDir, "merge_all.mp4")
 	// 1人ならそのまま
 	if len(userVideos) == 1 {
-		return ffmpegCopy(userVideos[0], filepath.Join(r.outputDir, "merge_all.mp4"))
+		err := ffmpegCopy(userVideos[0], mergeAllPath);if err != nil {
+			return err
+		}
+	} else {
+		// 複数人 → レイアウト合成
+		err := mergeTimelinesToGrid(
+			userVideos,
+			mergeAllPath,
+		);if err != nil {
+			return err
+		}
 	}
 
-	// 複数人 → レイアウト合成
-	return mergeTimelinesToGrid(
-		userVideos,
-		filepath.Join(r.outputDir, "merge_all.mp4"),
-	)
-}
-
-func ffmpegConcatReencode(listFile, out string) error {
-	// concat demuxer -> 再エンコードで確実に（copyは環境で壊れやすい）
-	args := []string{
-		"-y",
-		"-f", "concat",
-		"-safe", "0",
-		"-i", listFile,
-		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
-		"-c:a", "aac", "-b:a", "128k",
-		"-movflags", "+faststart",
-		out,
-	}
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func writeConcatList(path string, files []string) error {
-	if err := ensureDir(filepath.Dir(path)); err != nil {
+	storagePath := os.Getenv("MEDIA_STORAGE_PATH") + "/" + r.roomId + "/" + r.startTime.Format("20060102-150405") + ".mp4"
+	err := copyFile(mergeAllPath, storagePath);if err != nil {
 		return err
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 
-	for _, p := range files {
-		abs, _ := filepath.Abs(p)
-		fmt.Fprintf(f, "file '%s'\n", abs)
-	}
+	removeDirIfExists(filepath.Join(r.outputDir))
 	return nil
 }
 
-func mergeTimelinesToGrid(timelines []string, out string) error {
-	n := len(timelines)
-	if n == 0 {
-		return fmt.Errorf("no inputs")
+func removeDirIfExists(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
 	}
-
-	// n==1 のとき xstack は使えない（inputs>=2）。ここがあなたの「同じミス多い」の原因。
-	if n == 1 {
-		// 単体はそのまま出力（copyでOK）
-		return ffmpegCopy(timelines[0], out)
-	}
-
-	args := []string{"-y"}
-	for _, p := range timelines {
-		args = append(args, "-i", p)
-	}
-
-	// mp4 1本につき input index は 0..n-1、videoもaudioも同じ index を参照する
-	inputs := make([]record.InputIndex, 0, n)
-	for i := 0; i < n; i++ {
-		inputs = append(inputs, record.InputIndex{V: i, A: i})
-	}
-
-	filter := record.CreateLayoutForTimelines(inputs, 0, 0) // 下の record 側を参照
-
-	args = append(args,
-		"-filter_complex", filter,
-		"-map", "[v]",
-		"-map", "[a]",
-		"-c:v", "libx264",
-		"-preset", "fast",
-		"-crf", "23",
-		"-c:a", "aac",
-		"-b:a", "128k",
-		"-movflags", "+faststart",
-		out,
-	)
-
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return os.RemoveAll(path)
 }
 
-func buildBodyMP4(out string, pair record.MediaPair) error {
-	args := []string{"-y"}
-	ok := record.AddFFmpegInputs(&args, pair, 0, 0)
-	if !ok {
-		return fmt.Errorf("no valid media for body: %+v", pair)
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
 	}
 
-	args = append(args,
-		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
-		"-c:a", "aac", "-b:a", "128k",
-		"-movflags", "+faststart",
-		out,
-	)
-
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func buildBlackMP4(out string, dur time.Duration, w, h int) error {
-	secs := dur.Seconds()
-	if secs < 0 {
-		secs = 0
+	in, err := os.Open(src)
+	if err != nil {
+		return err
 	}
-	args := []string{
-		"-y",
-		"-f", "lavfi", "-i", fmt.Sprintf("color=size=%dx%d:rate=30:color=black", w, h),
-		"-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-		"-t", fmt.Sprintf("%.3f", secs),
-		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
-		"-c:a", "aac", "-b:a", "128k",
-		"-movflags", "+faststart",
-		out,
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
 	}
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
+	defer func() {
+		_ = out.Close()
+	}()
 
-func ffmpegCopy(in, out string) error {
-	args := []string{"-y", "-i", in, "-c", "copy", "-movflags", "+faststart", out}
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
 
-func ensureDir(dir string) error {
-	return os.MkdirAll(dir, 0755)
+	return out.Sync()
 }
