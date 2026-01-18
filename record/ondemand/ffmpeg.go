@@ -138,6 +138,56 @@ func ffmpegCopy(in, out string) error {
 	return cmd.Run()
 }
 
+func ffmpegGenerateThumbnail(
+	in string,
+	thumbPath string,
+) error {
+	if err := os.MkdirAll(filepath.Dir(thumbPath), 0755); err != nil {
+		return err
+	}
+
+	args := []string{
+		"-y",
+		"-ss", "1",
+		"-i", in,
+		"-frames:v", "1",
+		thumbPath,
+	}
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func ffmpegGenerateHLS(
+	in string,
+	hlsDir string,
+) error {
+	if err := os.MkdirAll(hlsDir, 0755); err != nil {
+		return err
+	}
+
+	hlsIndex := filepath.Join(hlsDir, "index.m3u8")
+	hlsSegment := filepath.Join(hlsDir, "segment_%03d.ts")
+
+	args := []string{
+		"-y",
+		"-i", in,
+		"-c:v", "libx264",
+		"-c:a", "aac",
+		"-hls_time", "4",
+		"-hls_playlist_type", "vod",
+		"-hls_segment_filename", hlsSegment,
+		hlsIndex,
+	}
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func ensureDir(dir string) error {
 	return os.MkdirAll(dir, 0755)
 }

@@ -91,7 +91,7 @@ func (s *MediaService) CreatePeer(
 			if room.recorder != nil {
 				return
 			}
-			room.recorder = ondemand.NewRecorder(roomId)
+			room.recorder = ondemand.NewRecorder(roomId, user.Id)
 
 			go room.recorder.Start(room.trackRemotes)
 			log.Info("recording started")
@@ -155,6 +155,16 @@ func (s *MediaService) CreatePeer(
 			}
 			room.listLock.Lock()
 			delete(room.participants, user.Id)
+			if room.recorder != nil {
+				if room.recorder.GetStartUserId() == user.Id {
+					room.recorder.Stop()
+					room.recorder = nil
+					broadcastDataChannel("room", roomId, user.Id, DCEnvelope{
+						Event: "record-stop",
+						Message: nil,
+					})
+				}
+			}
 			room.listLock.Unlock()
 			if len(room.participants) == 0 {
 				delete(rooms.item, roomId)

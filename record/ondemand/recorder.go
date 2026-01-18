@@ -28,9 +28,10 @@ type Recorder struct {
 	endTime time.Time
 	// userId -> streamId -> trackId
 	segments map[string]map[string]map[string]*record.Segment
+	startUserId string
 }
 
-func NewRecorder(roomId string) record.IRecorder {
+func NewRecorder(roomId string, userId string) record.IRecorder {
 	currentTime := time.Now()
 	outputDir := os.Getenv("MEDIA_TMP_PATH") + "/" + roomId
 	os.MkdirAll(outputDir, 0755)
@@ -42,6 +43,7 @@ func NewRecorder(roomId string) record.IRecorder {
 		outputDir: outputDir,
 		startTime: currentTime,
 		segments: make(map[string]map[string]map[string]*record.Segment),
+		startUserId: userId,
 	}
 }
 
@@ -75,6 +77,10 @@ func (r *Recorder) Stop() {
 	close(r.stop)
 	r.wg.Wait()
 	r.MergeWithBlanksToMP4()
+}
+
+func (r *Recorder) GetStartUserId() string {
+	return r.startUserId
 }
 
 func (r *Recorder) GetPacketChannels() map[string]chan *rtp.Packet {
@@ -378,11 +384,29 @@ func (r *Recorder) MergeWithBlanksToMP4() error {
 		}
 	}
 
-	storagePath := os.Getenv("MEDIA_STORAGE_PATH") + "/" + r.roomId + "/" + r.startTime.Format("20060102-150405") + ".mp4"
-	err := copyFile(mergeAllPath, storagePath);if err != nil {
+	recordingId := r.startTime.UTC().Format("20060102-150405")
+	baseDir := filepath.Join(
+		os.Getenv("MEDIA_STORAGE_PATH"),
+		r.roomId,
+		recordingId,
+	)
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return err
 	}
-
+	// 1. MP4 保存（DL用・任意）
+	srcMP4 := filepath.Join(baseDir, "source.mp4")
+	if err := copyFile(mergeAllPath, srcMP4); err != nil {
+		return err
+	}
+	// 2. サムネイル
+	thumb := filepath.Join(baseDir, "thumb.jpg")
+	if err := ffmpegGenerateThumbnail(srcMP4, thumb); err != nil {
+		return err
+	}
+	// 3. HLS
+	if err := ffmpegGenerateHLS(srcMP4, baseDir); err != nil {
+		return err
+	}
 	removeDirIfExists(filepath.Join(r.outputDir))
 	return nil
 }

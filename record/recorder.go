@@ -32,6 +32,7 @@ type IRecorder interface {
 	GetPacketChannels() map[string]chan *rtp.Packet
 	Start(trackRemotes map[string]map[string]*webrtc.TrackRemote)
 	Stop()
+	GetStartUserId() string
 	AddParticipant(userId string, t *webrtc.TrackRemote)
 	RemoveParticipant(userId string, t *webrtc.TrackRemote)
 }
