@@ -2,7 +2,7 @@
 FROM golang:1.25-alpine
 
 # 必要なツールを追加（git, bash など）
-RUN apk add --no-cache git bash curl
+RUN apk add --no-cache git bash curl ffmpeg
 
 WORKDIR /app
 

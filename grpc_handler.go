@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	media "streaming-media.jounetsism.biz/proto/media"
+	"streaming-media.jounetsism.biz/record/ondemand"
 )
 
 type MediaService struct {
@@ -25,7 +26,7 @@ func (s *MediaService) CreatePeer(
 ) (*media.GetRoomResponse, error) {
 	roomId := req.GetSpaceId()
 	user := req.GetUser()
-	spaceMember := req.GetSpaceMember()
+	spaceUser := req.GetSpaceUser()
 	room := rooms.getOrCreate(roomId)
 	_, ok := room.participants[user.Id];
 	if ok {
@@ -86,6 +87,24 @@ func (s *MediaService) CreatePeer(
 			return
 		}
 
+		if env.Event == "record-start" {
+			if room.recorder != nil {
+				return
+			}
+			room.recorder = ondemand.NewRecorder(roomId, user.Id)
+
+			go room.recorder.Start(room.trackRemotes)
+			log.Info("recording started")
+		}
+
+		if env.Event == "record-stop" {
+			if room.recorder == nil {
+				return
+			}
+			room.recorder.Stop()
+			room.recorder = nil
+			log.Info("record stop scheduled")
+		}
 		broadcastDataChannel("room", roomId, user.Id, env)
 	})
 	// payload := map[string]any{
@@ -97,8 +116,8 @@ func (s *MediaService) CreatePeer(
 	// dc.Send(b)
 	room.listLock.Lock()
 	room.participants[user.Id] = &Participant{
-		spaceMember.GetId(),
-		spaceMember.GetRole(),
+		spaceUser.GetId(),
+		spaceUser.GetRole(),
 		UserInfo{
 			user.GetId(),
 			user.GetEmail(),
@@ -136,6 +155,16 @@ func (s *MediaService) CreatePeer(
 			}
 			room.listLock.Lock()
 			delete(room.participants, user.Id)
+			if room.recorder != nil {
+				if room.recorder.GetStartUserId() == user.Id {
+					room.recorder.Stop()
+					room.recorder = nil
+					broadcastDataChannel("room", roomId, user.Id, DCEnvelope{
+						Event: "record-stop",
+						Message: nil,
+					})
+				}
+			}
 			room.listLock.Unlock()
 			if len(room.participants) == 0 {
 				delete(rooms.item, roomId)
@@ -147,7 +176,7 @@ func (s *MediaService) CreatePeer(
 
 	// ----- track handler -----
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		log.Infof("Got remote track: %s %s %s %s %s", t.Kind(), t.ID(), t.StreamID(), t.Msid(), t.RID())
+		log.Infof("Got remote track: %s %s %s %s %s %s %s", t.Kind(), t.ID(), t.StreamID(), t.Msid(), t.RID(), t.Codec().MimeType, t.Codec().ClockRate)
 		room, ok := rooms.getRoom(roomId)
 		if !ok {
 			return
@@ -156,6 +185,11 @@ func (s *MediaService) CreatePeer(
 		if trackLocal == nil {
 			return
 		}
+		trackRemote := addRemoteTrack(room, user.Id, t)
+		if trackRemote == nil {
+			return
+		}
+
 		track := &TrackParticipant{
 			UserInfo{
 				user.GetId(),
@@ -170,6 +204,7 @@ func (s *MediaService) CreatePeer(
 		jsonData, _ := json.Marshal(room.trackParticipants)
 		defer func() {
 			removeTrack(room, trackLocal)
+			removeRemoteTrack(room, user.Id, t)
 			delete(room.trackParticipants, t.StreamID())
 		}()
 		// BroadcastToRoom(roomId, "track-participant", jsonData)
@@ -180,7 +215,10 @@ func (s *MediaService) CreatePeer(
 
 		buf := make([]byte, 1500)
 		pkt := &rtp.Packet{}
-
+		if room.recorder != nil {
+			room.recorder.AddParticipant(user.Id, t)
+			defer room.recorder.RemoveParticipant(user.Id, t)
+		}
 		for {
 			n, _, err := t.Read(buf)
 			if err != nil {
@@ -194,6 +232,17 @@ func (s *MediaService) CreatePeer(
 			pkt.Extension = false
 			pkt.Extensions = nil
 			trackLocal.WriteRTP(pkt)
+			if room.recorder != nil {
+				bufCopy := make([]byte, n)
+				copy(bufCopy, buf[:n])
+
+				pktCopy := &rtp.Packet{}
+				pktCopy.Unmarshal(bufCopy)
+				channel, ok := room.recorder.GetPacketChannels()[t.ID()]
+				if ok {
+					channel <- pktCopy
+				}
+			}
 		}
 	})
 
@@ -261,6 +310,9 @@ func (s *MediaService) CreateViewerPeer(
 		}
 
 		broadcastDataChannel("room", roomId, user.Id, env)
+		if env.Event == "chat" {
+			room.messages = append(room.messages, json.RawMessage(env.Message))
+		}
 	})
 
 	room.listLock.Lock()
@@ -437,7 +489,7 @@ func (s *MediaService) RemoveParticipant(
 
 func (s *MediaService) RequestEntry(
 	ctx context.Context,
-	req *media.SpaceMemberRequest,
+	req *media.SpaceUserRequest,
 ) (*media.Void, error) {
 	_, ok := rooms.getRoom(req.SpaceId)
 	if !ok {
@@ -448,7 +500,7 @@ func (s *MediaService) RequestEntry(
 		return nil, status.Error(codes.NotFound, "roomが存在しません")
 	}
 
-	jsonData, _ := json.Marshal(req.SpaceMember)
+	jsonData, _ := json.Marshal(req.SpaceUser)
 	multicastDataChannel("room", req.SpaceId, DCEnvelope{
 		Event: "participant-request",
 		Message: jsonData,
@@ -461,7 +513,7 @@ func (s *MediaService) RequestEntry(
 
 func (s *MediaService) ChangeMemberState(
 	ctx context.Context,
-	req *media.SpaceMemberRequest,
+	req *media.SpaceUserRequest,
 ) (*media.Void, error) {
 	_, ok := rooms.getRoom(req.SpaceId)
 	if !ok {
@@ -472,7 +524,7 @@ func (s *MediaService) ChangeMemberState(
 		return nil, status.Error(codes.NotFound, "roomが存在しません")
 	}
 
-	jsonData, _ := json.Marshal(req.SpaceMember)
+	jsonData, _ := json.Marshal(req.SpaceUser)
 	multicastDataChannel("room", req.SpaceId, DCEnvelope{
 		Event: "change-member-state",
 		Message: jsonData,

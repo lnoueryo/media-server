@@ -14,6 +14,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/sirupsen/logrus"
 	"streaming-media.jounetsism.biz/proto/media"
+	"streaming-media.jounetsism.biz/record"
 )
 
 var rooms = &Rooms{
@@ -48,15 +49,23 @@ type TrackParticipant struct{
     TrackID  string `json:"trackId"`
 }
 
+type RemoteTracks struct {
+	id    string
+	video *webrtc.TrackRemote
+	audio *webrtc.TrackRemote
+}
+
 type Room struct {
 	ID           string
 	listLock     sync.Mutex
 	participants  map[string]*Participant
 	trackLocals   map[string]*webrtc.TrackLocalStaticRTP
-	trackRemotes  map[string]*webrtc.TrackRemote
+	trackRemotes map[string]map[string]*webrtc.TrackRemote
     trackParticipants map[string]*TrackParticipant
     viewers       map[string]*Viewer
 	cancelFunc    context.CancelFunc
+    messages      []json.RawMessage
+    recorder     record.IRecorder
 }
 
 func (r *Room) GetSliceParticipants() []*media.Participant {
@@ -99,9 +108,10 @@ func (r *Rooms) getOrCreate(id string) *Room {
         ID:            id,
         participants:  make(map[string]*Participant),
         trackLocals:   make(map[string]*webrtc.TrackLocalStaticRTP),
-        trackRemotes:  make(map[string]*webrtc.TrackRemote),
+        trackRemotes:  make(map[string]map[string]*webrtc.TrackRemote),
         trackParticipants: make(map[string]*TrackParticipant),
         viewers:       make(map[string]*Viewer),
+        messages:      []json.RawMessage{},
     }
     r.item[id] = room
 
@@ -151,9 +161,22 @@ func addTrack(room *Room, t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
     }
 
     room.trackLocals[t.ID()] = trackLocal
-    room.trackRemotes[t.ID()] = t
+    // room.trackRemotes[t.ID()] = t
 
     return trackLocal
+}
+
+func addRemoteTrack(room *Room, userId string, t *webrtc.TrackRemote) *webrtc.TrackRemote {
+    room.listLock.Lock()
+    defer func() {
+        room.listLock.Unlock()
+        signalPeerConnections(room)
+    }()
+    if room.trackRemotes[userId] == nil {
+        room.trackRemotes[userId] = make(map[string]*webrtc.TrackRemote)
+    }
+    room.trackRemotes[userId][t.ID()] = t
+    return t
 }
 
 func removeTrack(room *Room, t *webrtc.TrackLocalStaticRTP) {
@@ -163,7 +186,18 @@ func removeTrack(room *Room, t *webrtc.TrackLocalStaticRTP) {
         signalPeerConnections(room)
     }()
     delete(room.trackLocals, t.ID())
-    delete(room.trackRemotes, t.ID())
+}
+
+func removeRemoteTrack(room *Room, userId string, t *webrtc.TrackRemote) {
+    room.listLock.Lock()
+    defer func() {
+        room.listLock.Unlock()
+        signalPeerConnections(room)
+    }()
+    delete(room.trackRemotes[userId], t.ID())
+    if len(room.trackRemotes[userId]) == 0 {
+        delete(room.trackRemotes, userId)
+    }
 }
 
 // --------------------------------------------------------
@@ -271,9 +305,12 @@ func signalPeerConnections(room *Room) {
                 return true
             }
             // gRPCで送信
-            logrus.Info("Sending new offer to participant %s in room %s", p.ID, room.ID)
+
             offerJSON, _ := json.Marshal(offer)
-            Unicast(room.ID, p.ID, "offer", offerJSON)
+            err = Unicast(room.ID, p.ID, "offer", offerJSON); if err != nil {
+                logrus.Error("Failed to send offer:", err)
+                p.PC.Close()
+            }
         }
         return false
     }
